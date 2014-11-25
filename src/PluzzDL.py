@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -*- coding:Utf-8 -*-
+# -*- coding:utf-8 -*-
 
 # Notes :
 #    -> Filtre Wireshark :
@@ -16,6 +16,7 @@ import binascii
 import datetime
 import hashlib
 import hmac
+import json
 import os
 import re
 import StringIO
@@ -45,9 +46,10 @@ class PluzzDL( object ):
 	"""
 
 	REGEX_ID = "http://info.francetelevisions.fr/\?id-video=([^\"]+)"
-	XML_DESCRIPTION = "http://www.pluzz.fr/appftv/webservices/video/getInfosOeuvre.php?mode=zeri&id-diffusion=_ID_EMISSION_"
+	JSON_DESCRIPTION = "http://webservices.francetelevisions.fr/tools/getInfosOeuvre/v2/?idDiffusion=_ID_EMISSION_&catalogue=Pluzz"
 	URL_SMI = "http://www.pluzz.fr/appftv/webservices/video/getFichierSmi.php?smi=_CHAINE_/_ID_EMISSION_.smi&source=azad"
-	M3U8_LINK = "http://medias2.francetv.fr/catchup-mobile/france-dom-tom/non-token/non-drm/m3u8/_FILE_NAME_.m3u8"
+	#M3U8_LINK = "http://medias2.francetv.fr/catchup-mobile/france-dom-tom/non-token/non-drm/m3u8/_FILE_NAME_.m3u8"
+	M3U8_LINK = "http://medias2.francetv.fr/catchup-mobile/hls-ios-inf/i/streaming-adaptatif_france-dom-tom/_FILE_NAME_-,398,632,934,k.mp4.csmil/master.m3u8"
 	REGEX_M3U8 = "/([0-9]{4}/S[0-9]{2}/J[0-9]{1}/[0-9]*-[0-9]{6,8})-"
 
 	def __init__( self,
@@ -75,7 +77,7 @@ class PluzzDL( object ):
 		# Recupere l'id de l'emission
 		idEmission = self.getId( url )
 		# Recupere la page d'infos de l'emission
-		pageInfos = self.navigateur.getFichier( self.XML_DESCRIPTION.replace( "_ID_EMISSION_", idEmission ) )
+		pageInfos = self.navigateur.getFichier( self.JSON_DESCRIPTION.replace( "_ID_EMISSION_", idEmission ) )
 		# Parse la page d'infos
 		self.parseInfos( pageInfos )
 		# Petit message en cas de DRM
@@ -129,17 +131,32 @@ class PluzzDL( object ):
 		Parse le fichier de description XML d'une emission
 		"""
 		try :
-			xml.sax.parseString( pageInfos, PluzzDLInfosHandler( self ) )
+			#xml.sax.parseString( pageInfos, PluzzDLInfosHandler( self ) )
+			data = json.loads(pageInfos)
+			self.codeProgramme = data["code_programme"]
+			self.chaine = data["chaine"]
+			self.timeStamp = float( data["diffusion"]["timestamp"] )
+			for v in data["videos"]:
+				print v
+				fmt = v["format"]
+				if fmt == "smil-mp4":
+					self.manifestURL = v["url"]
+				if fmt == "m3u8-download":
+					self.m3u8URL = v["url"]
+				# TODO: check for other formats?
+				self.drm = v["drm"]
+
 			# Si le lien m3u8 n'existe pas, il faut essayer de creer celui de la plateforme mobile
-			if( self.m3u8URL is None ):
-				self.m3u8URL = self.M3U8_LINK.replace( "_FILE_NAME_", re.findall( self.REGEX_M3U8, pageInfos )[ 0 ] )
+			#XXX:
+			#if( self.m3u8URL is None ):
+			#	self.m3u8URL = self.M3U8_LINK.replace( "_FILE_NAME_", re.findall( self.REGEX_M3U8, pageInfos )[ 0 ] )
 			logger.debug( "URL m3u8 : %s" % ( self.m3u8URL ) )
 			logger.debug( "URL manifest : %s" % ( self.manifestURL ) )
 			logger.debug( "Lien RTMP : %s" % ( self.lienRTMP ) )
 			logger.debug( "Lien MMS : %s" % ( self.lienMMS ) )
 			logger.debug( "Utilisation de DRM : %s" % ( self.drm ) )
-		except :
-			raise PluzzDLException( "Impossible de parser le fichier XML de l'émission" )
+		except:
+			raise PluzzDLException( "Impossible de parser le fichier JSON de l'émission" )
 
 	def getNomFichier( self, repertoire, codeProgramme, timeStamp, extension ):
 		"""
@@ -267,7 +284,9 @@ class PluzzDLM3U8( object ):
 		self.urlBase = "/".join( self.m3u8URL.split( "/" )[ :-1 ] )
 		# Recupere le lien avec le plus gros bitrate
 		try:
-			self.listeFragmentsURL = "%s/%s" % ( self.urlBase, re.findall( ".+?\.m3u8.*", self.m3u8 )[ -1 ] )
+			self.listeFragmentsURL = re.findall( ".+?\.m3u8.*", self.m3u8 )[ -1 ]
+			if "://" not in self.listeFragmentsURL:
+				self.listeFragmentsURL = "%s/%s" % ( self.urlBase, self.listeFragmentsURL )
 		except:
 			raise PluzzDLException( "Impossible de trouver le lien vers la liste des fragments" )
 		# Recupere la liste des fragments
@@ -306,7 +325,10 @@ class PluzzDLM3U8( object ):
 		try :
 			i = self.premierFragment
 			while( i <= self.nbFragMax and not self.stopDownloadEvent.isSet() ):
-				frag = self.navigateur.getFichier( "%s/%s" % ( self.urlBase, self.listeFragments[ i - 1 ] ) )
+				fragURL = self.listeFragments[ i - 1 ]
+				if "://" not in fragURL:
+					fragURL = "%s/%s" % ( self.urlBase, fragURL )
+				frag = self.navigateur.getFichier( fragURL )
 				self.fichierVideo.write( frag )
 				# Affichage de la progression
 				self.progressFnct( min( int( ( i / self.nbFragMax ) * 100 ), 100 ) )
