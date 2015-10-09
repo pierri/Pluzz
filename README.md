@@ -7,7 +7,7 @@ Runs on Raspbian (Debian Wheezy running on a Raspberry Pi) and on Mac OS X, when
 
 Installation instructions - Ubuntu:
 <pre>
-sudo apt-get install python-beautifulsoup ffmpeg python-crypto python-mechanize
+sudo apt-get install python-beautifulsoup ffmpeg python-crypto python-mechanize python-socksipy
 git clone https://github.com/pierri/Pluzz.git
 cd Pluzz
 make
